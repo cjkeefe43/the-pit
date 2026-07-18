@@ -501,7 +501,7 @@
         <button class="btn" id="saveFileBtn">Save to file</button>
         <button class="btn btn-danger btn-sm" id="unlinkFileBtn" hidden>Unlink</button>
       </div>
-      <p class="sync-note">Pick a spot on your device to keep your logbook as a real <b>.json</b> file. Once linked, <b>Save to file</b> writes straight to it, and finishing a workout auto-saves. <b>Open logbook file</b> loads one back in.</p>
+      <p class="sync-note">Keep your logbook as a real <b>.json</b> file. On a computer you can link a file so saves write straight to it and finishing a workout auto-saves. On a phone, <b>Save to Files</b> hands it to the Files app so you pick the folder — store it in <b>iCloud Drive</b> to reach it from any device — and <b>Open from Files</b> loads it back.</p>
       <div class="divider">or export / import a copy</div>
       <div class="btn-row" style="margin-top:12px">
         <button class="btn btn-primary" id="exportBtn">Export backup</button>
@@ -514,7 +514,7 @@
         <button class="btn" id="loadCodeBtn">Load from code</button>
       </div>
       <p class="sync-note">Your logbook lives in this browser unless you link a file above. Importing <b>merges</b> — it adds sessions you don't already have and never wipes what's here.</p>
-      <input type="file" id="importFile" accept="application/json,.json" hidden>
+      <input type="file" id="importFile" hidden>
     </div>
   </section>
 
@@ -1115,7 +1115,21 @@
 
   /* ---------- Linked logbook file (File System Access API) ---------- */
   const FSA = ("showSaveFilePicker" in window);
+  function canShareFiles(){
+    try{
+      return !!(navigator.share && navigator.canShare &&
+        navigator.canShare({ files: [new File(["{}"], "probe.json", { type:"application/json" })] }));
+    }catch(e){ return false; }
+  }
+  const SHARE = !FSA && canShareFiles();
   let fileHandle = null;
+
+  async function shareFile(){
+    try{
+      const file = new File([buildBackup(true)], "the-pit-logbook.json", { type:"application/json" });
+      await navigator.share({ files:[file], title:"The Pit logbook" });
+    }catch(e){ if(e && e.name !== "AbortError") exportFile(); }
+  }
 
   function idbOpen(){
     return new Promise((res, rej) => {
@@ -1145,19 +1159,23 @@
   }
 
   function setFileStatus(){
-    const el = $("#fileStatus"), unlink = $("#unlinkFileBtn"), saveBtn = $("#saveFileBtn"), chooseBtn = $("#chooseFileBtn"), openBtn = $("#openFileBtn");
-    if(fileHandle){
-      el.innerHTML = "Linked to <b>" + escapeHtml(fileHandle.name) + "</b>";
-    } else if(FSA){
-      el.textContent = "No file linked yet.";
+    const el = $("#fileStatus"), unlink = $("#unlinkFileBtn"), saveBtn = $("#saveFileBtn"),
+          chooseBtn = $("#chooseFileBtn"), openBtn = $("#openFileBtn");
+    if(FSA){
+      el.innerHTML = fileHandle ? ("Linked to <b>" + escapeHtml(fileHandle.name) + "</b>") : "No file linked yet.";
+      if(unlink) unlink.hidden = !fileHandle;
+    } else if(SHARE){
+      if(chooseBtn) chooseBtn.textContent = "Save to Files";
+      if(openBtn) openBtn.textContent = "Open from Files";
+      if(saveBtn) saveBtn.hidden = true;
+      if(unlink) unlink.hidden = true;
+      el.innerHTML = "Save sends your logbook to the <b>Files</b> app — pick any folder. Use <b>iCloud Drive</b> to reach it from every device.";
     } else {
-      el.textContent = "This browser can't link a file — use Export / Import below.";
-    }
-    if(unlink) unlink.hidden = !fileHandle;
-    if(!FSA){ // fall back to download/upload behaviour
       if(chooseBtn) chooseBtn.textContent = "Download backup";
       if(openBtn) openBtn.textContent = "Upload backup";
       if(saveBtn) saveBtn.hidden = true;
+      if(unlink) unlink.hidden = true;
+      el.textContent = "This browser saves to your Downloads folder.";
     }
   }
 
@@ -1189,7 +1207,7 @@
   }
 
   async function chooseFileLocation(){
-    if(!FSA){ exportFile(); return; }
+    if(!FSA){ if(SHARE) return shareFile(); return exportFile(); }
     try{
       fileHandle = await window.showSaveFilePicker({
         suggestedName: "the-pit-logbook.json",
@@ -1215,6 +1233,7 @@
     }catch(e){ if(e && e.name !== "AbortError") toast("Couldn't open that file"); }
   }
   async function saveToFile(){
+    if(!FSA){ if(SHARE) return shareFile(); return exportFile(); }
     if(!fileHandle){ chooseFileLocation(); return; }
     if(await writeToHandle()) toast("Logbook saved to " + fileHandle.name);
   }
