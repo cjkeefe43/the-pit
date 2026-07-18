@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -252,6 +253,10 @@
   .lift-foot{
     display:flex;justify-content:space-between;gap:8px;padding:0 16px 14px;
   }
+  .foot-right{display:flex;gap:8px}
+  .lift.editing{border-left-color:var(--caution)}
+  .lift-edit{padding:16px}
+  .edit-actions{display:flex;gap:10px;margin-top:16px}
 
   /* ---- History ---- */
   .hist{display:flex;flex-direction:column;gap:12px}
@@ -535,6 +540,7 @@
 
   /* ---------- State ---------- */
   let current = load(KEY_CUR) || newWorkout();
+  let editingId = null;
   let history = load(KEY_HIST) || [];
   let prefs = load(KEY_PREFS) || { rest:90 };
   if(typeof prefs.rest !== "number") prefs.rest = 90;
@@ -589,6 +595,7 @@
 
   /* ---------- Render ---------- */
   function render(){
+    if(editingId && !current.exercises.some(e => e.id === editingId)) editingId = null;
     $("#sessionDate").textContent = fmtDate(current.date);
     if(document.activeElement !== nameInput) nameInput.value = current.name;
     $("#statLifts").textContent = current.exercises.length;
@@ -599,8 +606,42 @@
     liftsEmpty.style.display = current.exercises.length ? "none" : "block";
 
     current.exercises.forEach((ex, i) => {
-      const cleared = exerciseCleared(ex);
       const card = document.createElement("div");
+
+      // ----- edit mode -----
+      if(ex.id === editingId){
+        card.className = "lift editing";
+        card.innerHTML = `
+          <div class="lift-edit">
+            <div class="field">
+              <label>Exercise</label>
+              <input class="ed-name" value="${escapeHtml(ex.name)}" autocomplete="off">
+            </div>
+            <div class="triple">
+              <div class="field">
+                <label>Sets</label>
+                <input class="ed-sets" type="number" min="1" max="20" step="1" value="${ex.sets}" inputmode="numeric">
+              </div>
+              <div class="field">
+                <label>Weight</label>
+                <input class="ed-weight" type="number" min="0" step="0.5" value="${fmtWeight(ex.weight)}" inputmode="decimal">
+              </div>
+              <div class="x">×</div>
+              <div class="field">
+                <label>Reps</label>
+                <input class="ed-reps" type="number" min="1" max="100" step="1" value="${ex.reps}" inputmode="numeric">
+              </div>
+            </div>
+            <div class="edit-actions">
+              <button class="btn btn-primary btn-sm" data-save-edit="${i}">Save changes</button>
+              <button class="btn btn-ghost btn-sm" data-cancel-edit="${i}">Cancel</button>
+            </div>
+          </div>`;
+        liftsEl.appendChild(card);
+        return;
+      }
+
+      const cleared = exerciseCleared(ex);
       card.className = "lift" + (cleared ? " done" : "");
 
       const badge = cleared
@@ -644,7 +685,10 @@
         </div>
         <div class="lift-foot">
           <button class="btn btn-ghost btn-sm" data-rest="1">Rest ${fmtClock(prefs.rest)}</button>
-          <button class="btn btn-danger btn-sm" data-remove="${i}">Remove</button>
+          <div class="foot-right">
+            <button class="btn btn-ghost btn-sm" data-edit="${i}">Edit</button>
+            <button class="btn btn-danger btn-sm" data-remove="${i}">Remove</button>
+          </div>
         </div>`;
       liftsEl.appendChild(card);
     });
@@ -780,6 +824,19 @@
   liftsEl.addEventListener("click", e => {
     const rest = e.target.closest("[data-rest]");
     if(rest){ startRest(prefs.rest); return; }
+    const ed = e.target.closest("[data-edit]");
+    if(ed){
+      const ex = current.exercises[+ed.dataset.edit];
+      if(ex){ editingId = ex.id; render();
+        const inp = liftsEl.querySelector(".ed-name");
+        if(inp){ inp.focus(); inp.select(); }
+      }
+      return;
+    }
+    const sv = e.target.closest("[data-save-edit]");
+    if(sv){ saveEdit(+sv.dataset.saveEdit); return; }
+    const cn = e.target.closest("[data-cancel-edit]");
+    if(cn){ editingId = null; render(); return; }
     const rm = e.target.closest("[data-remove]");
     if(rm){
       const i = +rm.dataset.remove;
@@ -788,6 +845,34 @@
       return;
     }
   });
+
+  liftsEl.addEventListener("keydown", e => {
+    if(e.key !== "Enter") return;
+    if(!e.target.closest(".lift-edit")) return;
+    const btn = liftsEl.querySelector("[data-save-edit]");
+    if(btn) saveEdit(+btn.dataset.saveEdit);
+  });
+
+  function saveEdit(i){
+    const ex = current.exercises[i];
+    const card = liftsEl.children[i];
+    if(!ex || !card) return;
+    const name = card.querySelector(".ed-name").value.trim();
+    const sets = parseInt(card.querySelector(".ed-sets").value,10);
+    const weight = parseFloat(card.querySelector(".ed-weight").value);
+    const reps = parseInt(card.querySelector(".ed-reps").value,10);
+    if(!name){ toast("Name the exercise"); return; }
+    if(!(sets>=1)){ toast("Sets must be at least 1"); return; }
+    if(isNaN(weight) || weight<0){ toast("Enter a weight"); return; }
+    if(!(reps>=1)){ toast("Enter target reps"); return; }
+    // resize the logged array, keeping reps already recorded
+    const old = ex.logged || [];
+    const logged = [];
+    for(let s=0; s<sets; s++) logged[s] = (s < old.length) ? old[s] : "";
+    ex.name = name; ex.sets = sets; ex.weight = weight; ex.reps = reps; ex.logged = logged;
+    editingId = null; save(); render();
+    toast("Lift updated");
+  }
 
   historyEl.addEventListener("click", e => {
     const cp = e.target.closest("[data-copy]");
