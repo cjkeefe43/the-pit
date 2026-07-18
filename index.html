@@ -314,6 +314,8 @@
   .rest-custom .field{flex:1}
   .sync-note{font-size:13.5px;color:var(--ash);margin-top:14px;line-height:1.55}
   .sync-note b{color:var(--chalk);font-weight:600}
+  .file-status{font-family:var(--mono);font-size:12px;letter-spacing:.04em;color:var(--ash)}
+  .file-status b{color:var(--caution);font-weight:700}
 
   /* ---- Backup & Sync ---- */
   .divider{
@@ -493,7 +495,16 @@
       <span class="eyebrow">Move between devices</span>
     </div>
     <div class="panel-body">
-      <div class="btn-row" style="margin-top:0">
+      <div class="file-status" id="fileStatus">No file linked yet.</div>
+      <div class="btn-row" style="margin-top:12px">
+        <button class="btn btn-primary" id="chooseFileBtn">Choose file location</button>
+        <button class="btn btn-ghost" id="openFileBtn">Open logbook file</button>
+        <button class="btn" id="saveFileBtn">Save to file</button>
+        <button class="btn btn-danger btn-sm" id="unlinkFileBtn" hidden>Unlink</button>
+      </div>
+      <p class="sync-note">Pick a spot on your device to keep your logbook as a real <b>.json</b> file. Once linked, <b>Save to file</b> writes straight to it, and finishing a workout auto-saves. <b>Open logbook file</b> loads one back in.</p>
+      <div class="divider">or export / import a copy</div>
+      <div class="btn-row" style="margin-top:12px">
         <button class="btn btn-primary" id="exportBtn">Export backup</button>
         <button class="btn btn-ghost" id="importBtn">Import backup</button>
       </div>
@@ -503,7 +514,7 @@
         <button class="btn" id="copyCodeBtn">Copy sync code</button>
         <button class="btn" id="loadCodeBtn">Load from code</button>
       </div>
-      <p class="sync-note">Your logbook lives only in this browser. Export a backup file to keep it safe, or copy the sync code and paste it into The Pit on another device. Importing <b>merges</b> — it adds sessions you don't already have and never wipes what's here.</p>
+      <p class="sync-note">Your logbook lives in this browser unless you link a file above. Importing <b>merges</b> — it adds sessions you don't already have and never wipes what's here.</p>
       <input type="file" id="importFile" accept="application/json,.json" hidden>
     </div>
   </section>
@@ -754,6 +765,7 @@
     current = newWorkout();
     save(); render();
     toast("Workout logged · get after the next one");
+    autoSaveFile();
     window.scrollTo({top:0, behavior:"smooth"});
   }
 
@@ -1101,6 +1113,127 @@
     if(!t){ toast("Paste a sync code first"); return; }
     try{ importData(JSON.parse(t)); }catch(e){ toast("That code isn't valid"); }
   });
+
+  /* ---------- Linked logbook file (File System Access API) ---------- */
+  const FSA = ("showSaveFilePicker" in window);
+  let fileHandle = null;
+
+  function idbOpen(){
+    return new Promise((res, rej) => {
+      const r = indexedDB.open("pit-fs", 1);
+      r.onupgradeneeded = () => r.result.createObjectStore("h");
+      r.onsuccess = () => res(r.result);
+      r.onerror = () => rej(r.error);
+    });
+  }
+  async function idbSet(k, v){
+    try{ const db = await idbOpen(); await new Promise((res, rej) => {
+      const t = db.transaction("h", "readwrite"); t.objectStore("h").put(v, k);
+      t.oncomplete = res; t.onerror = () => rej(t.error);
+    }); }catch(e){}
+  }
+  async function idbGet(k){
+    try{ const db = await idbOpen(); return await new Promise((res) => {
+      const rq = db.transaction("h", "readonly").objectStore("h").get(k);
+      rq.onsuccess = () => res(rq.result || null); rq.onerror = () => res(null);
+    }); }catch(e){ return null; }
+  }
+  async function idbDel(k){
+    try{ const db = await idbOpen(); await new Promise((res) => {
+      const t = db.transaction("h", "readwrite"); t.objectStore("h").delete(k);
+      t.oncomplete = res; t.onerror = res;
+    }); }catch(e){}
+  }
+
+  function setFileStatus(){
+    const el = $("#fileStatus"), unlink = $("#unlinkFileBtn"), saveBtn = $("#saveFileBtn"), chooseBtn = $("#chooseFileBtn"), openBtn = $("#openFileBtn");
+    if(fileHandle){
+      el.innerHTML = "Linked to <b>" + escapeHtml(fileHandle.name) + "</b>";
+    } else if(FSA){
+      el.textContent = "No file linked yet.";
+    } else {
+      el.textContent = "This browser can't link a file — use Export / Import below.";
+    }
+    if(unlink) unlink.hidden = !fileHandle;
+    if(!FSA){ // fall back to download/upload behaviour
+      if(chooseBtn) chooseBtn.textContent = "Download backup";
+      if(openBtn) openBtn.textContent = "Upload backup";
+      if(saveBtn) saveBtn.hidden = true;
+    }
+  }
+
+  async function ensurePermission(mode){
+    if(!fileHandle || !fileHandle.requestPermission) return true;
+    let p = await fileHandle.queryPermission({ mode });
+    if(p === "granted") return true;
+    p = await fileHandle.requestPermission({ mode });
+    return p === "granted";
+  }
+  async function writeToHandle(){
+    if(!fileHandle) return false;
+    try{
+      if(!(await ensurePermission("readwrite"))){ toast("Permission denied for that file"); return false; }
+      const w = await fileHandle.createWritable();
+      await w.write(buildBackup(true));
+      await w.close();
+      return true;
+    }catch(e){ toast("Couldn't write to the file"); return false; }
+  }
+  // Silent best-effort save — only writes if permission is already granted.
+  async function autoSaveFile(){
+    if(!fileHandle || !fileHandle.queryPermission) return;
+    try{
+      if((await fileHandle.queryPermission({ mode:"readwrite" })) !== "granted") return;
+      const w = await fileHandle.createWritable();
+      await w.write(buildBackup(true)); await w.close();
+    }catch(e){}
+  }
+
+  async function chooseFileLocation(){
+    if(!FSA){ exportFile(); return; }
+    try{
+      fileHandle = await window.showSaveFilePicker({
+        suggestedName: "the-pit-logbook.json",
+        types: [{ description: "Pit logbook", accept: { "application/json": [".json"] } }]
+      });
+      const ok = await writeToHandle();
+      await idbSet("logbook", fileHandle);
+      setFileStatus();
+      if(ok) toast("Logbook saved to " + fileHandle.name);
+    }catch(e){ if(e && e.name !== "AbortError") toast("Couldn't set that location"); }
+  }
+  async function openLogbookFile(){
+    if(!FSA){ importFile.click(); return; }
+    try{
+      const [h] = await window.showOpenFilePicker({
+        types: [{ description: "Pit logbook", accept: { "application/json": [".json"] } }]
+      });
+      fileHandle = h;
+      const file = await h.getFile();
+      importData(JSON.parse(await file.text()));
+      await idbSet("logbook", fileHandle);
+      setFileStatus();
+    }catch(e){ if(e && e.name !== "AbortError") toast("Couldn't open that file"); }
+  }
+  async function saveToFile(){
+    if(!fileHandle){ chooseFileLocation(); return; }
+    if(await writeToHandle()) toast("Logbook saved to " + fileHandle.name);
+  }
+  async function unlinkFile(){
+    fileHandle = null; await idbDel("logbook"); setFileStatus(); toast("File unlinked");
+  }
+
+  $("#chooseFileBtn").addEventListener("click", chooseFileLocation);
+  $("#openFileBtn").addEventListener("click", openLogbookFile);
+  $("#saveFileBtn").addEventListener("click", saveToFile);
+  $("#unlinkFileBtn").addEventListener("click", unlinkFile);
+
+  // Restore a previously linked file (permission is re-checked on next write).
+  (async () => {
+    const h = await idbGet("logbook");
+    if(h){ fileHandle = h; }
+    setFileStatus();
+  })();
 
   renderPrefs();
   showIdle();
