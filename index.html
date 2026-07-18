@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -906,7 +907,7 @@
     // recolor set cells
     card.querySelectorAll("input[data-set]").forEach(inp => {
       const cell = inp.parentElement;
-      cell.classList.remove("hit","miss");
+      cell.classList.remove("hit","miss","over");
       if(inp.value !== ""){
         cell.classList.add(Number(inp.value) >= ex.reps ? "hit" : "miss");
       }
