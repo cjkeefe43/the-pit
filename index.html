@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -82,6 +81,21 @@
     color:var(--ash);
     margin-top:12px;
   }
+
+  /* ---- Tabs ---- */
+  .tabs{
+    display:flex;gap:6px;background:var(--steel);border:1px solid var(--line);
+    border-radius:5px;padding:5px;margin-bottom:18px;
+  }
+  .tab-btn{
+    flex:1;font-family:var(--body);font-weight:700;font-size:13px;
+    letter-spacing:.1em;text-transform:uppercase;color:var(--ash);
+    background:transparent;border:none;border-radius:3px;padding:12px 10px;
+    cursor:pointer;min-height:44px;transition:background .15s,color .15s;
+  }
+  .tab-btn:hover{color:var(--chalk)}
+  .tab-btn.active{background:var(--caution);color:#161200}
+  .tab-btn:focus-visible{outline:2px solid var(--caution);outline-offset:2px}
 
   /* ---- Panels ---- */
   .panel{
@@ -381,6 +395,13 @@
     <div class="tagline">Log the iron · Earn the plate</div>
   </header>
 
+  <div class="tabs" role="tablist" aria-label="Sections">
+    <button class="tab-btn active" data-tab="workout" role="tab" aria-selected="true">Workout</button>
+    <button class="tab-btn" data-tab="sync" role="tab" aria-selected="false">Backup &amp; Sync</button>
+  </div>
+
+  <div id="tabWorkout" class="tabview">
+
   <!-- SESSION -->
   <section class="panel">
     <div class="panel-head">
@@ -488,6 +509,10 @@
     </div>
   </section>
 
+  </div><!-- /tabWorkout -->
+
+  <div id="tabSync" class="tabview" hidden>
+
   <!-- BACKUP & SYNC -->
   <section class="panel">
     <div class="panel-head">
@@ -518,6 +543,8 @@
       <input type="file" id="importFile" hidden>
     </div>
   </section>
+
+  </div><!-- /tabSync -->
 
   <div class="foot-note">Runs on your machine · Saved to this browser</div>
 </div>
@@ -1253,6 +1280,20 @@
     if(h){ fileHandle = h; }
     setFileStatus();
   })();
+
+  // Tabs
+  const tabBtns = document.querySelectorAll(".tab-btn");
+  const tabViews = { workout: $("#tabWorkout"), sync: $("#tabSync") };
+  function showTab(name){
+    Object.keys(tabViews).forEach(k => { if(tabViews[k]) tabViews[k].hidden = (k !== name); });
+    tabBtns.forEach(b => {
+      const on = b.dataset.tab === name;
+      b.classList.toggle("active", on);
+      b.setAttribute("aria-selected", on ? "true" : "false");
+    });
+    window.scrollTo({ top:0 });
+  }
+  tabBtns.forEach(b => b.addEventListener("click", () => showTab(b.dataset.tab)));
 
   renderPrefs();
   showIdle();
